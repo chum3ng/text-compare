@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" ng-app="diffStudio" ng-controller="MainCtrl as vm" ng-attr-data-theme="{{vm.theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text Diff Studio</title>
+<link rel="stylesheet" href="styles.css">
+<!-- Dependencies (pinned, all run locally in the browser; no user text is sent anywhere):
+     AngularJS 1.8.3 - app framework | jsdiff 5.1.0 (global Diff) - line/word/char/patch diff | js-yaml 4.1.0 - YAML parsing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.8.3/angular.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div><h1>Text Diff Studio</h1><p>Compare, inspect, and understand differences</p></div>
+  <div class="row">
+    <button ng-click="vm.toggleTheme()" aria-label="Toggle light or dark theme">{{vm.theme==='dark'?'Light':'Dark'}} theme</button>
+    <button ng-click="vm.clearAll()">Clear all</button>
+  </div>
+</header>
+
+<div class="banner err" ng-if="vm.depError">{{vm.depError}}</div>
+
+<section class="toolbar" aria-label="Comparison controls">
+  <label>Format
+    <select ng-model="vm.format" ng-change="vm.compare()">
+      <option ng-repeat="f in vm.formats" value="{{f}}">{{f}}</option>
+    </select></label>
+  <label>View
+    <select ng-model="vm.mode" ng-change="vm.compare()">
+      <option value="line">Line by line</option>
+      <option value="side">Side by side</option>
+      <option value="unified">Unified</option>
+      <option value="word">Word level</option>
+      <option value="char">Character level</option>
+    </select></label>
+  <label class="chk"><input type="checkbox" ng-model="vm.smart" ng-change="vm.compare()"> Smart compare (JSON / YAML / XML)</label>
+  <button class="primary" ng-click="vm.compare()">Compare</button>
+  <button ng-click="vm.swap()">Swap</button>
+  <label>Samples
+    <select ng-model="vm.sample" ng-change="vm.loadSample()">
+      <option value="">Load sample…</option>
+      <option value="yaml">Spring Boot YAML</option><option value="json">JSON payload</option>
+      <option value="java">Java service</option><option value="xml">XML config</option><option value="log">Log / text</option>
+    </select></label>
+  <button ng-click="vm.showSettings=!vm.showSettings" ng-attr-aria-expanded="{{vm.showSettings}}">Settings<span class="badge" ng-if="vm.activeCount()">{{vm.activeCount()}}</span></button>
+</section>
+
+<section class="settings" ng-if="vm.showSettings">
+  <label><input type="checkbox" ng-model="vm.o.ignoreWs" ng-change="vm.compare()"> Ignore leading/trailing whitespace</label>
+  <label><input type="checkbox" ng-model="vm.o.ignoreAllWs" ng-change="vm.compare()"> Ignore all whitespace</label>
+  <label><input type="checkbox" ng-model="vm.o.ignoreBlank" ng-change="vm.compare()"> Ignore blank lines</label>
+  <label><input type="checkbox" ng-model="vm.o.ignoreCase" ng-change="vm.compare()"> Ignore case</label>
+  <label><input type="checkbox" ng-model="vm.o.invisible"> Show invisible characters</label>
+  <label>Context lines
+    <select ng-model="vm.o.context" ng-change="vm.compare()">
+      <option value="0">0</option><option value="1">1</option><option value="3">3</option><option value="5">5</option><option value="all">All</option>
+    </select></label>
+  <p class="hint">Line endings (CRLF/LF) are always normalized for comparison. Key order is always ignored in Smart compare. Your input is never modified.</p>
+</section>
+
+<main class="editors">
+  <div class="pane" ng-repeat="p in [vm.left, vm.right]">
+    <div class="pane-head">
+      <strong>{{$index===0?'Original / Before':'Modified / After'}}</strong>
+      <span class="muted">{{p.name}} · {{vm.lineCount(p.text)}} lines · {{p.text.length}} chars</span>
+      <span class="spacer"></span>
+      <button ng-click="vm.paste(p)">Paste</button>
+      <button ng-click="vm.openFile(p)">Load file</button>
+      <button ng-click="vm.copy(p.text)">Copy</button>
+      <button ng-click="vm.download(p.text,p.name)">Download</button>
+      <button ng-click="vm.clear(p)">Clear</button>
+    </div>
+    <div class="ed">
+      <pre class="gutter" aria-hidden="true">{{vm.gutter(p.text)}}</pre>
+      <textarea spellcheck="false" wrap="off" ng-model="p.text" ng-change="vm.schedule()" sync-scroll
+        aria-label="{{$index===0?'Original text':'Modified text'}}" placeholder="Paste or load text here"></textarea>
+      <div class="empty" ng-if="!p.text">Empty</div>
+    </div>
+  </div>
+</main>
+<input type="file" id="filePick" hidden file-load="vm.fileChosen(file,text)">
+
+<section class="results" ng-if="vm.result">
+  <div class="cards">
+    <div class="card"><b>{{vm.result.stats.add}}</b>Additions</div>
+    <div class="card"><b>{{vm.result.stats.del}}</b>Deletions</div>
+    <div class="card"><b>{{vm.result.stats.mod}}</b>Modified</div>
+    <div class="card"><b>{{vm.result.stats.eq}}</b>Unchanged</div>
+    <div class="card"><b>{{vm.result.stats.add+vm.result.stats.del+vm.result.stats.mod}}</b>Total differences</div>
+    <div class="card"><b>{{vm.result.parse}}</b>Parse status</div>
+    <div class="card" ng-if="vm.result.struct"><b>{{vm.result.struct.length}}</b>Changed properties</div>
+  </div>
+  <p class="status" ng-class="{same:vm.result.same}">
+    {{vm.result.same ? 'No differences found' : 'Differences detected'}} ·
+    {{vm.result.pct}}% unchanged (unchanged lines ÷ lines in the longer input)
+  </p>
+  <div class="banner warn" ng-repeat="w in vm.result.warnings">{{w}}</div>
+
+  <div class="nav">
+    <button ng-click="vm.step(-1)" ng-disabled="!vm.blocks.length">Previous</button>
+    <button ng-click="vm.step(1)" ng-disabled="!vm.blocks.length">Next</button>
+    <span>{{vm.blocks.length ? vm.cur+1 : 0}} / {{vm.blocks.length}}</span>
+    <span class="muted">Alt+↑ / Alt+↓</span>
+    <span class="spacer"></span>
+    <button ng-click="vm.copy(vm.patch())">Copy unified diff</button>
+    <button ng-click="vm.download(vm.patch(),'changes.patch')">Download .patch</button>
+  </div>
+
+  <div class="struct" ng-if="vm.result.struct">
+    <h2>Structural changes ({{vm.result.format}})</h2>
+    <p ng-if="!vm.result.struct.length" class="muted">Documents are semantically equal.</p>
+    <table ng-if="vm.result.struct.length">
+      <tr><th>Path</th><th>Change</th><th>Before</th><th>After</th></tr>
+      <tr ng-repeat="c in vm.result.struct" class="s-{{c.kind}}">
+        <td class="mono">{{c.path}}</td><td>{{c.label}}</td><td class="mono">{{c.from}}</td><td class="mono">{{c.to}}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="diff" ng-class="'v-'+vm.view" ng-if="vm.rows.length">
+    <table ng-if="vm.view==='side'">
+      <tr ng-repeat="r in vm.rows track by $index" id="r{{$index}}" class="r-{{r.t}}" ng-class="{cur:vm.isCur($index)}">
+        <td ng-if="r.t==='gap'" colspan="4" class="gap">{{r.n}} unchanged lines hidden</td>
+        <td ng-if="r.t!=='gap'" class="ln">{{r.an}}</td>
+        <td ng-if="r.t!=='gap'" class="code l"><span ng-repeat="s in r.as" ng-class="s.c">{{vm.vis(s.t)}}</span></td>
+        <td ng-if="r.t!=='gap'" class="ln">{{r.bn}}</td>
+        <td ng-if="r.t!=='gap'" class="code"><span ng-repeat="s in r.bs" ng-class="s.c">{{vm.vis(s.t)}}</span></td>
+      </tr>
+    </table>
+    <table ng-if="vm.view!=='side'">
+      <tr ng-repeat="r in vm.rows track by $index" id="r{{$index}}" class="r-{{r.t}}" ng-class="{cur:vm.isCur($index)}">
+        <td ng-if="r.t==='gap'" colspan="4" class="gap">{{r.n}} unchanged lines hidden</td>
+        <td ng-if="r.t!=='gap'" class="ln">{{r.an}}</td>
+        <td ng-if="r.t!=='gap'" class="ln">{{r.bn}}</td>
+        <td ng-if="r.t!=='gap'" class="sign">{{r.sign}}</td>
+        <td ng-if="r.t!=='gap'" class="code"><span ng-repeat="s in r.segs" ng-class="s.c">{{vm.vis(s.t)}}</span></td>
+      </tr>
+    </table>
+  </div>
+  <p class="muted" ng-if="!vm.rows.length && vm.result.same">Nothing to show: the inputs match under the current options.</p>
+</section>
+<script src="app.js"></script>
+</body>
+</html>
