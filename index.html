@@ -6,12 +6,14 @@
 <title>Text Diff Studio</title>
 <link rel="stylesheet" href="styles.css">
 <!-- Dependencies (pinned, all run locally in the browser; no user text is sent anywhere):
-     AngularJS 1.8.3 - app framework | jsdiff 5.1.0 (global Diff) - line/word/char/patch diff | js-yaml 4.1.0 - YAML parsing -->
+     AngularJS 1.8.3 - app framework | jsdiff 5.1.0 (global Diff) - word/char highlighting and .patch export | js-yaml 4.1.0 - YAML parsing -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.8.3/angular.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
 </head>
 <body>
+
+<!-- ===== Header ===== -->
 <header class="top">
   <div><h1>Text Diff Studio</h1><p>Compare, inspect, and understand differences</p></div>
   <div class="row">
@@ -20,55 +22,41 @@
   </div>
 </header>
 
+<div class="banner err" ng-if="vm.error">{{vm.error}}</div>
 <div class="banner err" ng-if="vm.depError">{{vm.depError}}</div>
 
+<!-- ===== Toolbar ===== -->
 <section class="toolbar" aria-label="Comparison controls">
   <label>Format
-    <select ng-model="vm.format" ng-change="vm.compare()">
-      <option ng-repeat="f in vm.formats" value="{{f}}">{{f}}</option>
-    </select></label>
+    <select ng-model="vm.format" ng-options="f for f in vm.formats" ng-change="vm.compare()"></select></label>
   <label>View
-    <select ng-model="vm.mode" ng-change="vm.compare()">
-      <option value="line">Line by line</option>
-      <option value="side">Side by side</option>
-      <option value="unified">Unified</option>
-      <option value="word">Word level</option>
-      <option value="char">Character level</option>
-    </select></label>
+    <select ng-model="vm.mode" ng-options="m.id as m.label for m in vm.modes" ng-change="vm.compare()"></select></label>
   <label class="chk"><input type="checkbox" ng-model="vm.smart" ng-change="vm.compare()"> Smart compare (JSON / YAML / XML)</label>
   <button class="primary" ng-click="vm.compare()">Compare</button>
   <button ng-click="vm.swap()">Swap</button>
-  <button ng-click="vm.hideInputs=!vm.hideInputs">{{vm.hideInputs?'Show inputs':'Hide inputs'}}</button>
   <label>Samples
-    <select ng-model="vm.sample" ng-change="vm.loadSample()">
+    <select ng-model="vm.sample" ng-options="s.id as s.label for s in vm.samples" ng-change="vm.loadSample()">
       <option value="">Load sample…</option>
-      <option value="yaml">Spring Boot YAML</option><option value="json">JSON payload</option>
-      <option value="java">Java service</option><option value="xml">XML config</option><option value="log">Log / text</option>
     </select></label>
   <button ng-click="vm.showSettings=!vm.showSettings" ng-attr-aria-expanded="{{vm.showSettings}}">Settings<span class="badge" ng-if="vm.activeCount()">{{vm.activeCount()}}</span></button>
 </section>
 
+<!-- ===== Settings ===== -->
 <section class="settings" ng-if="vm.showSettings">
   <label><input type="checkbox" ng-model="vm.o.ignoreWs" ng-change="vm.compare()"> Ignore leading/trailing whitespace</label>
   <label><input type="checkbox" ng-model="vm.o.ignoreAllWs" ng-change="vm.compare()"> Ignore all whitespace</label>
   <label><input type="checkbox" ng-model="vm.o.ignoreBlank" ng-change="vm.compare()"> Ignore blank lines</label>
   <label><input type="checkbox" ng-model="vm.o.ignoreCase" ng-change="vm.compare()"> Ignore case</label>
-  <label><input type="checkbox" ng-model="vm.o.invisible"> Show invisible characters</label>
-  <label><input type="checkbox" ng-model="vm.o.wrap"> Wrap long lines</label>
-  <label>Highlight changes within a line
-    <select ng-model="vm.o.intra" ng-change="vm.compare()">
-      <option value="off">Off</option><option value="word">Words</option><option value="char">Characters</option>
-    </select></label>
-  <label>Diff font size
-    <select ng-model="vm.o.fontSize"><option value="11">11</option><option value="13">13</option><option value="15">15</option><option value="17">17</option></select></label>
+  <label><input type="checkbox" ng-model="vm.o.invisible" ng-change="vm.savePrefs()"> Show invisible characters</label>
   <label>Context lines
-    <select ng-model="vm.o.context" ng-change="vm.compare()">
-      <option value="0">0</option><option value="1">1</option><option value="3">3</option><option value="5">5</option><option value="all">All</option>
-    </select></label>
+    <select ng-model="vm.o.context" ng-options="c as (c==='all' ? 'All' : c) for c in vm.contextChoices" ng-change="vm.compare()"></select></label>
+  <label>Arrays (Smart compare)
+    <select ng-model="vm.o.arrayMode" ng-options="m.id as m.label for m in vm.arrayModes" ng-change="vm.compare()"></select></label>
   <p class="hint">Line endings (CRLF/LF) are always normalized for comparison. Key order is always ignored in Smart compare. Your input is never modified.</p>
 </section>
 
-<main class="editors" ng-hide="vm.hideInputs">
+<!-- ===== Editors ===== -->
+<main class="editors">
   <div class="pane" ng-repeat="p in [vm.left, vm.right]">
     <div class="pane-head">
       <strong>{{$index===0?'Original / Before':'Modified / After'}}</strong>
@@ -90,6 +78,7 @@
 </main>
 <input type="file" id="filePick" hidden file-load="vm.fileChosen(file,text)">
 
+<!-- ===== Results ===== -->
 <section class="results" ng-if="vm.result">
   <div class="cards">
     <div class="card"><b>{{vm.result.stats.add}}</b>Additions</div>
@@ -106,6 +95,7 @@
   </p>
   <div class="banner warn" ng-repeat="w in vm.result.warnings">{{w}}</div>
 
+  <!-- navigation and export -->
   <div class="nav">
     <button ng-click="vm.step(-1)" ng-disabled="!vm.blocks.length">Previous</button>
     <button ng-click="vm.step(1)" ng-disabled="!vm.blocks.length">Next</button>
@@ -116,18 +106,8 @@
     <button ng-click="vm.download(vm.patch(),'changes.patch')">Download .patch</button>
   </div>
 
-  <div class="struct" ng-if="vm.result.struct">
-    <h2>Structural changes ({{vm.result.format}})</h2>
-    <p ng-if="!vm.result.struct.length" class="muted">Documents are semantically equal.</p>
-    <table ng-if="vm.result.struct.length">
-      <tr><th>Path</th><th>Change</th><th>Before</th><th>After</th></tr>
-      <tr ng-repeat="c in vm.result.struct" class="s-{{c.kind}}">
-        <td class="mono">{{c.path}}</td><td>{{c.label}}</td><td class="mono">{{c.from}}</td><td class="mono">{{c.to}}</td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="diff" ng-class="['v-'+vm.view, vm.o.wrap ? 'wrap' : '']" ng-style="{'font-size': vm.o.fontSize + 'px'}" ng-if="vm.rows.length">
+  <!-- text diff -->
+  <div class="diff" ng-class="'v-'+vm.view" ng-if="vm.rows.length">
     <table ng-if="vm.view==='side'">
       <tr ng-repeat="r in vm.rows track by $index" id="r{{$index}}" class="r-{{r.t}}" ng-class="{cur:vm.isCur($index)}">
         <td ng-if="r.t==='gap'" colspan="4" class="gap">{{r.n}} unchanged lines hidden</td>
@@ -148,7 +128,20 @@
     </table>
   </div>
   <p class="muted" ng-if="!vm.rows.length && vm.result.same">Nothing to show: the inputs match under the current options.</p>
+
+  <!-- structural changes (Smart compare) -->
+  <div class="struct" ng-if="vm.result.struct">
+    <h2>Structural changes ({{vm.result.format}})</h2>
+    <p ng-if="!vm.result.struct.length" class="muted">Documents are semantically equal.</p>
+    <table ng-if="vm.result.struct.length">
+      <tr><th>Path</th><th>Change</th><th>Before</th><th>After</th></tr>
+      <tr ng-repeat="c in vm.result.struct" class="s-{{c.kind}}">
+        <td class="mono">{{c.path}}</td><td>{{c.label}}</td><td class="mono">{{c.from}}</td><td class="mono">{{c.to}}</td>
+      </tr>
+    </table>
+  </div>
 </section>
+
 <script src="app.js"></script>
 </body>
 </html>
