@@ -106,18 +106,6 @@
     <button ng-click="vm.download(vm.patch(),'changes.patch')">Download .patch</button>
   </div>
 
-  <!-- structural changes (Smart compare) -->
-  <div class="struct" ng-if="vm.result.struct">
-    <h2>Structural changes ({{vm.result.format}})</h2>
-    <p ng-if="!vm.result.struct.length" class="muted">Documents are semantically equal.</p>
-    <table ng-if="vm.result.struct.length">
-      <tr><th>Path</th><th>Change</th><th>Before</th><th>After</th></tr>
-      <tr ng-repeat="c in vm.result.struct" class="s-{{c.kind}}">
-        <td class="mono">{{c.path}}</td><td>{{c.label}}</td><td class="mono">{{c.from}}</td><td class="mono">{{c.to}}</td>
-      </tr>
-    </table>
-  </div>
-
   <!-- text diff -->
   <div class="diff" ng-class="'v-'+vm.view" ng-if="vm.rows.length">
     <table ng-if="vm.view==='side'">
@@ -140,6 +128,18 @@
     </table>
   </div>
   <p class="muted" ng-if="!vm.rows.length && vm.result.same">Nothing to show: the inputs match under the current options.</p>
+
+  <!-- structural changes (Smart compare) -->
+  <div class="struct" ng-if="vm.result.struct">
+    <h2>Structural changes ({{vm.result.format}})</h2>
+    <p ng-if="!vm.result.struct.length" class="muted">Documents are semantically equal.</p>
+    <table ng-if="vm.result.struct.length">
+      <tr><th>Path</th><th>Change</th><th>Before</th><th>After</th></tr>
+      <tr ng-repeat="c in vm.result.struct" class="s-{{c.kind}}">
+        <td class="mono">{{c.path}}</td><td>{{c.label}}</td><td class="mono">{{c.from}}</td><td class="mono">{{c.to}}</td>
+      </tr>
+    </table>
+  </div>
 </section>
 
 <script src="app.js"></script>
