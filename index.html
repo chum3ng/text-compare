@@ -116,11 +116,35 @@
     <button ng-click="vm.download(vm.patch(),'changes.patch')">Download .patch</button>
   </div>
 
+  <!-- copy each side of the result; show / hide folded lines -->
+  <div class="diff-head" ng-if="vm.rows.length">
+    <div class="dh">
+      <strong>Original</strong>
+      <button ng-click="vm.copyResult('l-all', vm.left.text)" ng-disabled="!vm.left.text" ng-class="{copied: vm.copied==='l-all'}" title="Copy the whole Original text">{{vm.copied==='l-all' ? 'Copied \u2713' : 'Copy'}}</button>
+      <button ng-click="vm.copyResult('l-chg', vm.changedText('l'))" ng-disabled="!vm.hasChanged('l')" ng-class="{copied: vm.copied==='l-chg'}" title="Copy only the Original lines that differ">{{vm.copied==='l-chg' ? 'Copied \u2713' : 'Copy changed lines'}}</button>
+    </div>
+    <div class="dh">
+      <strong>Modified</strong>
+      <button ng-click="vm.copyResult('r-all', vm.right.text)" ng-disabled="!vm.right.text" ng-class="{copied: vm.copied==='r-all'}" title="Copy the whole Modified text">{{vm.copied==='r-all' ? 'Copied \u2713' : 'Copy'}}</button>
+      <button ng-click="vm.copyResult('r-chg', vm.changedText('r'))" ng-disabled="!vm.hasChanged('r')" ng-class="{copied: vm.copied==='r-chg'}" title="Copy only the Modified lines that differ">{{vm.copied==='r-chg' ? 'Copied \u2713' : 'Copy changed lines'}}</button>
+    </div>
+    <span class="spacer"></span>
+    <button ng-if="vm.hidden" ng-click="vm.expandAll()">Show all {{vm.hidden}} hidden {{vm.hidden===1 ? 'line' : 'lines'}}</button>
+    <button ng-if="!vm.hidden && vm.hasRevealed()" ng-click="vm.collapseAll()">Hide unchanged lines</button>
+  </div>
+
   <!-- text diff -->
   <div class="diff" ng-class="'v-'+vm.view" ng-if="vm.rows.length">
     <table ng-if="vm.view==='side'">
       <tr ng-repeat="r in vm.rows track by $index" id="r{{$index}}" class="r-{{r.t}}" ng-class="{cur:vm.isCur($index)}">
-        <td ng-if="r.t==='gap'" colspan="5" class="gap">{{r.n}} unchanged lines hidden</td>
+        <td ng-if="r.t==='gap'" colspan="5" class="gap">
+          <span>{{r.n}} unchanged {{r.n===1 ? 'line' : 'lines'}} hidden</span>
+          <span class="gap-actions">
+            <button class="gap-btn" ng-if="r.n>10 && r.hasPrev" ng-click="vm.reveal(r,'top')" title="Show 10 more lines below the previous change">&darr; 10</button>
+            <button class="gap-btn" ng-click="vm.reveal(r,'all')">Show {{r.n===1 ? 'line' : 'all ' + r.n}}</button>
+            <button class="gap-btn" ng-if="r.n>10 && r.hasNext" ng-click="vm.reveal(r,'bottom')" title="Show 10 more lines above the next change">&uarr; 10</button>
+          </span>
+        </td>
         <td ng-if="r.t!=='gap'" class="ln">{{r.an}}</td>
         <td ng-if="r.t!=='gap'" class="code l"><span ng-repeat="s in r.as" ng-class="s.c">{{vm.vis(s.t)}}</span></td>
         <td ng-if="r.t!=='gap'" class="act"><span class="act-in" ng-if="vm.canMove(r)"><button class="mv-btn" ng-click="vm.move(r,'l',$index)" title="{{vm.moveTitle('l')}}" aria-label="{{vm.moveTitle('l')}}">&larr;</button><button class="mv-btn" ng-click="vm.move(r,'r',$index)" title="{{vm.moveTitle('r')}}" aria-label="{{vm.moveTitle('r')}}">&rarr;</button></span></td>
@@ -130,7 +154,14 @@
     </table>
     <table ng-if="vm.view!=='side'">
       <tr ng-repeat="r in vm.rows track by $index" id="r{{$index}}" class="r-{{r.t}}" ng-class="{cur:vm.isCur($index)}">
-        <td ng-if="r.t==='gap'" colspan="5" class="gap">{{r.n}} unchanged lines hidden</td>
+        <td ng-if="r.t==='gap'" colspan="5" class="gap">
+          <span>{{r.n}} unchanged {{r.n===1 ? 'line' : 'lines'}} hidden</span>
+          <span class="gap-actions">
+            <button class="gap-btn" ng-if="r.n>10 && r.hasPrev" ng-click="vm.reveal(r,'top')" title="Show 10 more lines below the previous change">&darr; 10</button>
+            <button class="gap-btn" ng-click="vm.reveal(r,'all')">Show {{r.n===1 ? 'line' : 'all ' + r.n}}</button>
+            <button class="gap-btn" ng-if="r.n>10 && r.hasNext" ng-click="vm.reveal(r,'bottom')" title="Show 10 more lines above the next change">&uarr; 10</button>
+          </span>
+        </td>
         <td ng-if="r.t!=='gap'" class="act"><span class="act-in" ng-if="vm.canMove(r)"><button class="mv-btn" ng-click="vm.move(r,'l',$index)" title="{{vm.moveTitle('l')}}" aria-label="{{vm.moveTitle('l')}}">&larr;</button><button class="mv-btn" ng-click="vm.move(r,'r',$index)" title="{{vm.moveTitle('r')}}" aria-label="{{vm.moveTitle('r')}}">&rarr;</button></span></td>
         <td ng-if="r.t!=='gap'" class="ln">{{r.an}}</td>
         <td ng-if="r.t!=='gap'" class="ln">{{r.bn}}</td>

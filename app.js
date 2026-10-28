@@ -326,22 +326,30 @@ app.factory('diffService', function (lineDiffService) {
     return out;
   }
 
-  /* Fold unchanged runs that are further than `ctx` lines from a change. */
-  function withContext(rows, ctx) {
+  /* Fold unchanged runs that are further than `ctx` lines from a change.
+   * `revealed` is a set {rowIndex: true} of rows the user expanded by hand.
+   * Each gap row records the range it hides so it can be expanded later:
+   *   from / to  - inclusive indexes into `rows`
+   *   hasPrev / hasNext - whether a change sits directly above / below the gap */
+  function withContext(rows, ctx, revealed) {
     if (ctx === 'all') return rows;
     ctx = +ctx;
-    var keep = rows.map(function () { return false; }), out = [], hidden = 0;
+    revealed = revealed || {};
+    var keep = rows.map(function (r, i) { return !!revealed[i]; }), out = [], hidden = 0, start = 0;
     rows.forEach(function (r, i) {
       if (r.t === 'eq') return;
       for (var j = Math.max(0, i - ctx); j <= Math.min(rows.length - 1, i + ctx); j++) keep[j] = true;
     });
     rows.forEach(function (r, i) {
       if (keep[i]) {
-        if (hidden) { out.push({ t: 'gap', n: hidden }); hidden = 0; }
+        if (hidden) { out.push({ t: 'gap', n: hidden, from: start, to: i - 1, hasPrev: start > 0, hasNext: true }); hidden = 0; }
         out.push(r);
-      } else hidden++;
+      } else {
+        if (!hidden) start = i;
+        hidden++;
+      }
     });
-    if (hidden) out.push({ t: 'gap', n: hidden });
+    if (hidden) out.push({ t: 'gap', n: hidden, from: start, to: rows.length - 1, hasPrev: start > 0, hasNext: false });
     return out;
   }
 
@@ -611,6 +619,7 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
   vm.left = { text: '', name: 'original.txt' };
   vm.right = { text: '', name: 'modified.txt' };
   vm.result = null; vm.rows = []; vm.blocks = []; vm.cur = 0; vm.view = 'side';
+  vm.fullRows = []; vm.sideRows = []; vm.revealed = {}; vm.hidden = 0; vm.copied = '';
   vm.error = '';
   vm.history = [];        // undo stack for arrow moves
   vm.depError = (window.Diff && window.jsyaml) ? '' :
@@ -670,7 +679,7 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
   };
 
   /* ----- compare pipeline ----- */
-  function reset() { vm.result = null; vm.rows = []; vm.blocks = []; vm.cur = 0; }
+  function reset() { vm.result = null; vm.rows = []; vm.fullRows = []; vm.sideRows = []; vm.revealed = {}; vm.hidden = 0; vm.blocks = []; vm.cur = 0; }
 
   function inputWarnings(a, b) {
     var w = [];
@@ -689,6 +698,13 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
     if (s.error) { warnings.push('Structured comparison unavailable, showing text diff. ' + s.error); out.parse = 'Failed'; }
     else { out.changes = s.changes; out.parse = 'Valid ' + fmt; }
     return out;
+  }
+
+  /* Fold the full row list according to the context setting and any rows the user revealed. */
+  function render() {
+    vm.rows = diffService.withContext(vm.fullRows, vm.o.context, vm.revealed);
+    vm.blocks = diffService.changeBlocks(vm.rows);
+    vm.hidden = vm.rows.reduce(function (n, r) { return n + (r.t === 'gap' ? r.n : 0); }, 0);
   }
 
   function run() {
@@ -710,9 +726,10 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
     };
 
     vm.view = mode.view;
-    var rows = vm.view === 'side' ? text.rows : diffService.toInline(text.rows);
-    vm.rows = diffService.withContext(rows, vm.o.context);
-    vm.blocks = diffService.changeBlocks(vm.rows);
+    vm.sideRows = text.rows;
+    vm.fullRows = vm.view === 'side' ? text.rows : diffService.toInline(text.rows);
+    vm.revealed = {};
+    render();
     vm.cur = 0;
   }
 
@@ -771,6 +788,47 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
     vm.compare();
     vm.cur = Math.min(at, Math.max(0, vm.blocks.length - 1));   // the next change takes the place of the one just moved
   };
+
+  /* ----- hidden (folded) unchanged lines ----- */
+  var REVEAL_STEP = 10;
+
+  /* how: 'all' | 'top' (first lines of the gap) | 'bottom' (last lines of the gap) */
+  vm.reveal = function (gap, how) {
+    var from = gap.from, to = gap.to, i;
+    if (how === 'top') to = Math.min(to, from + REVEAL_STEP - 1);
+    if (how === 'bottom') from = Math.max(from, to - REVEAL_STEP + 1);
+    for (i = from; i <= to; i++) vm.revealed[i] = true;
+    render();
+    vm.cur = Math.min(vm.cur, Math.max(0, vm.blocks.length - 1));
+  };
+  vm.expandAll = function () {
+    var i;
+    for (i = 0; i < vm.fullRows.length; i++) vm.revealed[i] = true;
+    render();
+  };
+  vm.collapseAll = function () { vm.revealed = {}; render(); };
+  vm.hasRevealed = function () { return Object.keys(vm.revealed).length > 0; };
+
+  /* ----- copying the result of each side ----- */
+  var flashTimer;
+  vm.copyResult = function (key, text) {
+    fileService.copy(text).then(function () {
+      $timeout(function () {
+        vm.copied = key;
+        $timeout.cancel(flashTimer);
+        flashTimer = $timeout(function () { vm.copied = ''; }, 1500);
+      });
+    }).catch(function () { $timeout(function () { vm.depError = 'Copy failed: clipboard access was denied by the browser.'; }); });
+  };
+
+  /* Only the lines that differ on one side ('l' = Original, 'r' = Modified). */
+  vm.changedText = function (side) {
+    var kinds = side === 'l' ? { mod: 1, del: 1 } : { mod: 1, add: 1 };
+    return vm.sideRows.filter(function (r) { return kinds[r.t]; })
+      .map(function (r) { return (side === 'l' ? r.as : r.bs).map(function (seg) { return seg.t; }).join(''); })
+      .join('\n');
+  };
+  vm.hasChanged = function (side) { return vm.sideRows.some(function (r) { return side === 'l' ? (r.t === 'mod' || r.t === 'del') : (r.t === 'mod' || r.t === 'add'); }); };
 
   /* ----- patch export and change navigation ----- */
   vm.patch = function () { return diffService.patch(vm.left.text, vm.right.text); };
