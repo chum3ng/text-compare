@@ -132,7 +132,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); c
 
 /* ---------- 5. Editors ---------- */
 .editors {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: start;
   margin-top: 16px;
 }
 .pane {
@@ -141,9 +141,24 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); c
   border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .pane:focus-within { border-color: var(--accent); }
+.pane-l { grid-column: 1; grid-row: 1; }
+.pane-r { grid-column: 3; grid-row: 1; }
+
+/* Buttons between the editors: copy everything, swap, undo. */
+.mover { grid-column: 2; grid-row: 1; align-self: center; display: flex; flex-direction: column; gap: 10px; }
+.mv {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  width: 64px; min-height: 58px; padding: 6px 4px;
+  font-size: 12px; color: var(--muted);
+}
+.mv b { font-size: 22px; line-height: 1.1; font-weight: 500; color: var(--ink); }
+.mv:disabled b { color: var(--muted); }
 .pane-head { min-height: 50px; padding: 10px 12px; gap: 8px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
 .pane-head strong { font-size: 14px; }
-.pane-head .muted { font-size: 13px; }
+.pane-head { flex-wrap: nowrap; }
+.pane-head strong, .pane-head button { flex: none; white-space: nowrap; }
+.pane-head .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+@media (max-width: 1100px) { .pane-head { flex-wrap: wrap; } }
 .pane-head button { min-height: 28px; padding: 2px 10px; font-size: 13px; }
 
 .ed { position: relative; display: flex; height: 340px; min-height: 140px; resize: vertical; overflow: hidden; }
@@ -220,10 +235,20 @@ textarea:focus-visible { outline: none; }
 .v-side .code { width: 50%; }
 .v-side .code.l { border-right: 1px solid var(--line); }
 
+/* Arrow column: sits between the two panes (side by side) or before the line numbers (other views). */
+.act { width: 64px; min-width: 64px; padding: 0 4px; text-align: center; white-space: nowrap; background: var(--surface-2); border-inline: 1px solid var(--line); }
+.act-in { display: inline-flex; gap: 4px; }
+.mv-btn {
+  min-height: 24px; width: 26px; padding: 0;
+  font-size: 15px; line-height: 1; font-weight: 600; color: var(--accent);
+  background: var(--surface); border-radius: 5px;
+}
+.mv-btn:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
+
 /* Row colours; the line-number cell keeps a coloured edge so changes are easy to scan. */
-.r-add td:not(.ln) { background: var(--add); }
-.r-del td:not(.ln) { background: var(--del); }
-.r-mod td:not(.ln) { background: var(--mod); }
+.r-add td:not(.ln):not(.act) { background: var(--add); }
+.r-del td:not(.ln):not(.act) { background: var(--del); }
+.r-mod td:not(.ln):not(.act) { background: var(--mod); }
 .r-add .ln { box-shadow: inset 3px 0 0 var(--add-ink); }
 .r-del .ln { box-shadow: inset 3px 0 0 var(--del-ink); }
 .r-mod .ln { box-shadow: inset 3px 0 0 var(--mod-ink); }
@@ -242,7 +267,10 @@ tr.cur { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* ---------- 8. Responsive ---------- */
 @media (max-width: 900px) {
   :root { --gutter: 12px; }
-  .editors { grid-template-columns: 1fr; }
+  .editors { grid-template-columns: minmax(0, 1fr); }
+  .pane-l { grid-column: 1; grid-row: 1; }
+  .mover  { grid-column: 1; grid-row: 2; flex-direction: row; justify-content: center; flex-wrap: wrap; }
+  .pane-r { grid-column: 1; grid-row: 3; }
   .ed { height: 260px; }
   .toolbar label, .settings label { flex: 1 1 200px; }
   .toolbar label select { flex: 1; }

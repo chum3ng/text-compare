@@ -52,12 +52,14 @@
     <select ng-model="vm.o.context" ng-options="c as (c==='all' ? 'All' : c) for c in vm.contextChoices" ng-change="vm.compare()"></select></label>
   <label>Arrays (Smart compare)
     <select ng-model="vm.o.arrayMode" ng-options="m.id as m.label for m in vm.arrayModes" ng-change="vm.compare()"></select></label>
+  <label>Diff arrows move
+    <select ng-model="vm.o.moveUnit" ng-options="m.id as m.label for m in vm.moveUnits" ng-change="vm.savePrefs()"></select></label>
   <p class="hint">Line endings (CRLF/LF) are always normalized for comparison. Key order is always ignored in Smart compare. Your input is never modified.</p>
 </section>
 
 <!-- ===== Editors ===== -->
 <main class="editors">
-  <div class="pane" ng-repeat="p in [vm.left, vm.right]">
+  <div class="pane" ng-class="$index ? 'pane-r' : 'pane-l'" ng-repeat="p in [vm.left, vm.right]">
     <div class="pane-head">
       <strong>{{$index===0?'Original / Before':'Modified / After'}}</strong>
       <span class="muted">{{p.name}} · {{vm.lineCount(p.text)}} lines · {{p.text.length}} chars</span>
@@ -74,6 +76,14 @@
         aria-label="{{$index===0?'Original text':'Modified text'}}" placeholder="Paste or load text here"></textarea>
       <div class="empty" ng-if="!p.text">Empty</div>
     </div>
+  </div>
+
+  <!-- move whole texts between the panes -->
+  <div class="mover" role="group" aria-label="Move text between panes">
+    <button class="mv" ng-click="vm.copyAll('r')" ng-disabled="!vm.left.text" title="Replace Modified with a copy of Original" aria-label="Copy all from Original to Modified"><b>&rarr;</b>To right</button>
+    <button class="mv" ng-click="vm.copyAll('l')" ng-disabled="!vm.right.text" title="Replace Original with a copy of Modified" aria-label="Copy all from Modified to Original"><b>&larr;</b>To left</button>
+    <button class="mv" ng-click="vm.swap()" title="Swap Original and Modified" aria-label="Swap panes"><b>&rlarr;</b>Swap</button>
+    <button class="mv" ng-click="vm.undo()" ng-disabled="!vm.canUndo()" title="Undo the last move" aria-label="Undo last move"><b>&#8630;</b>Undo</button>
   </div>
 </main>
 <input type="file" id="filePick" hidden file-load="vm.fileChosen(file,text)">
@@ -110,16 +120,18 @@
   <div class="diff" ng-class="'v-'+vm.view" ng-if="vm.rows.length">
     <table ng-if="vm.view==='side'">
       <tr ng-repeat="r in vm.rows track by $index" id="r{{$index}}" class="r-{{r.t}}" ng-class="{cur:vm.isCur($index)}">
-        <td ng-if="r.t==='gap'" colspan="4" class="gap">{{r.n}} unchanged lines hidden</td>
+        <td ng-if="r.t==='gap'" colspan="5" class="gap">{{r.n}} unchanged lines hidden</td>
         <td ng-if="r.t!=='gap'" class="ln">{{r.an}}</td>
         <td ng-if="r.t!=='gap'" class="code l"><span ng-repeat="s in r.as" ng-class="s.c">{{vm.vis(s.t)}}</span></td>
+        <td ng-if="r.t!=='gap'" class="act"><span class="act-in" ng-if="vm.canMove(r)"><button class="mv-btn" ng-click="vm.move(r,'l',$index)" title="{{vm.moveTitle('l')}}" aria-label="{{vm.moveTitle('l')}}">&larr;</button><button class="mv-btn" ng-click="vm.move(r,'r',$index)" title="{{vm.moveTitle('r')}}" aria-label="{{vm.moveTitle('r')}}">&rarr;</button></span></td>
         <td ng-if="r.t!=='gap'" class="ln">{{r.bn}}</td>
         <td ng-if="r.t!=='gap'" class="code"><span ng-repeat="s in r.bs" ng-class="s.c">{{vm.vis(s.t)}}</span></td>
       </tr>
     </table>
     <table ng-if="vm.view!=='side'">
       <tr ng-repeat="r in vm.rows track by $index" id="r{{$index}}" class="r-{{r.t}}" ng-class="{cur:vm.isCur($index)}">
-        <td ng-if="r.t==='gap'" colspan="4" class="gap">{{r.n}} unchanged lines hidden</td>
+        <td ng-if="r.t==='gap'" colspan="5" class="gap">{{r.n}} unchanged lines hidden</td>
+        <td ng-if="r.t!=='gap'" class="act"><span class="act-in" ng-if="vm.canMove(r)"><button class="mv-btn" ng-click="vm.move(r,'l',$index)" title="{{vm.moveTitle('l')}}" aria-label="{{vm.moveTitle('l')}}">&larr;</button><button class="mv-btn" ng-click="vm.move(r,'r',$index)" title="{{vm.moveTitle('r')}}" aria-label="{{vm.moveTitle('r')}}">&rarr;</button></span></td>
         <td ng-if="r.t!=='gap'" class="ln">{{r.an}}</td>
         <td ng-if="r.t!=='gap'" class="ln">{{r.bn}}</td>
         <td ng-if="r.t!=='gap'" class="sign">{{r.sign}}</td>

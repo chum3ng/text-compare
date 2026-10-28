@@ -25,7 +25,8 @@ var LIMITS = {
   largeInput: 5000,       // lines; above this we warn about slow rendering
   maxEditDistance: 3000,  // Myers search cap; beyond it the region is shown as replaced
   valueLength: 120,       // max characters of a value shown in the structural table
-  debounceMs: 350
+  debounceMs: 350,
+  history: 50             // undo steps kept for arrow moves
 };
 
 var DEFAULT_OPTIONS = {
@@ -35,7 +36,8 @@ var DEFAULT_OPTIONS = {
   ignoreCase: false,
   invisible: false,       // display only
   context: '3',           // unchanged lines kept around a change; 'all' disables folding
-  arrayMode: 'index'      // Smart compare: 'index' | 'unordered'
+  arrayMode: 'index',     // Smart compare: 'index' | 'unordered'
+  moveUnit: 'block'       // what a diff arrow moves: 'block' | 'line'
 };
 
 /* Flags that change what counts as a difference (shown in the Settings badge). */
@@ -54,6 +56,11 @@ var VIEW_MODES = [
 var ARRAY_MODES = [
   { id: 'index',     label: 'Compare by position' },
   { id: 'unordered', label: 'Ignore order' }
+];
+
+var MOVE_UNITS = [
+  { id: 'block', label: 'Whole change block' },
+  { id: 'line',  label: 'Single line' }
 ];
 
 var CONTEXT_CHOICES = ['0', '1', '3', '5', 'all'];
@@ -229,19 +236,44 @@ app.factory('diffService', function (lineDiffService) {
     return { as: as, bs: bs };
   }
 
-  /* Turn an op list into rows. Runs of del+add are paired into 'mod' rows. */
+  /* Turn an op list into rows. Runs of del+add are paired into 'mod' rows.
+   *
+   * Every changed row also carries the raw line ranges needed to move it
+   * (0-based, half-open, in the ORIGINAL text of each side):
+   *   hl  - this row only          hlFirst - always true (one row = one line)
+   *   hb  - the whole change block hbFirst - true on the first row of the block
+   * An empty range {s:n, e:n} means "insert at line n".                       */
   function buildRows(ops, A, B, intraMode) {
-    var rows = [], dels = [], adds = [], ai = 0, bi = 0;
+    var rows = [], dels = [], adds = [], ai = 0, bi = 0, prevA = null, prevB = null;
+
+    function after(item) { return item ? item.i : 0; }   // raw index just after a kept line
+    function span(items, at) { return items.length ? { s: items[0].i - 1, e: items[items.length - 1].i } : { s: at, e: at }; }
 
     function flush() {
-      var paired = Math.min(dels.length, adds.length), k, x, y, seg;
+      if (!dels.length && !adds.length) return;
+      var pa = after(prevA), pb = after(prevB), sa = span(dels, pa), sb = span(adds, pb);
+      var block = { as: sa.s, ae: sa.e, bs: sb.s, be: sb.e };
+      var paired = Math.min(dels.length, adds.length), first = true, k, x, y, seg;
+
+      function emit(row, hl) {
+        row.hl = hl; row.hlFirst = true; row.hb = block; row.hbFirst = first;
+        first = false;
+        rows.push(row);
+      }
+
       for (k = 0; k < paired; k++) {
         x = dels[k]; y = adds[k];
         seg = intraMode ? intraLine(x.s, y.s, intraMode) : { as: plain(x.s), bs: plain(y.s) };
-        rows.push({ t: 'mod', an: x.i, bn: y.i, as: seg.as, bs: seg.bs });
+        emit({ t: 'mod', an: x.i, bn: y.i, as: seg.as, bs: seg.bs }, { as: x.i - 1, ae: x.i, bs: y.i - 1, be: y.i });
       }
-      for (k = paired; k < dels.length; k++) rows.push({ t: 'del', an: dels[k].i, bn: '', as: plain(dels[k].s), bs: [] });
-      for (k = paired; k < adds.length; k++) rows.push({ t: 'add', an: '', bn: adds[k].i, as: [], bs: plain(adds[k].s) });
+      for (k = paired; k < dels.length; k++) {      // lines only in A: insertion point in B is after the last paired line
+        x = dels[k]; y = adds.length ? adds[adds.length - 1].i : pb;
+        emit({ t: 'del', an: x.i, bn: '', as: plain(x.s), bs: [] }, { as: x.i - 1, ae: x.i, bs: y, be: y });
+      }
+      for (k = paired; k < adds.length; k++) {      // lines only in B
+        y = adds[k]; x = dels.length ? dels[dels.length - 1].i : pa;
+        emit({ t: 'add', an: '', bn: y.i, as: [], bs: plain(y.s) }, { as: x, ae: x, bs: y.i - 1, be: y.i });
+      }
       dels = []; adds = [];
     }
 
@@ -251,6 +283,7 @@ app.factory('diffService', function (lineDiffService) {
       else {
         flush();
         rows.push({ t: 'eq', an: A[ai].i, bn: B[bi].i, as: plain(A[ai].s), bs: plain(B[bi].s) });
+        prevA = A[ai]; prevB = B[bi];
         ai++; bi++;
       }
     });
@@ -272,13 +305,23 @@ app.factory('diffService', function (lineDiffService) {
     return { rows: rows, stats: countRows(rows), longer: Math.max(A.length, B.length), capped: result.capped };
   }
 
-  /* Expand 'mod' rows into a del row + an add row for the single-column views. */
+  /* Expand 'mod' rows into a del row + an add row for the single-column views.
+   * Move metadata is kept so arrows work in every view; only one of the two
+   * halves of a split row gets the "first" flag so it shows a single arrow set. */
   function toInline(rows) {
     var out = [];
     rows.forEach(function (r) {
-      if (r.t === 'mod' || r.t === 'del') out.push({ t: 'del', an: r.an, bn: '', sign: '-', segs: r.as });
-      if (r.t === 'mod' || r.t === 'add') out.push({ t: 'add', an: '', bn: r.bn, sign: '+', segs: r.bs });
-      if (r.t === 'eq') out.push({ t: 'eq', an: r.an, bn: r.bn, sign: ' ', segs: r.as });
+      if (r.t === 'eq') {
+        out.push({ t: 'eq', an: r.an, bn: r.bn, sign: ' ', segs: r.as });
+        return;
+      }
+      if (r.t === 'mod' || r.t === 'del') {
+        out.push({ t: 'del', an: r.an, bn: '', sign: '-', segs: r.as, hl: r.hl, hlFirst: true, hb: r.hb, hbFirst: r.hbFirst });
+      }
+      if (r.t === 'mod' || r.t === 'add') {
+        var only = r.t === 'add';
+        out.push({ t: 'add', an: '', bn: r.bn, sign: '+', segs: r.bs, hl: r.hl, hlFirst: only, hb: r.hb, hbFirst: only && r.hbFirst });
+      }
     });
     return out;
   }
@@ -312,11 +355,32 @@ app.factory('diffService', function (lineDiffService) {
     return blocks;
   }
 
+  /* Copy one hunk between the two texts.
+   * dir 'r': Original -> Modified    dir 'l': Modified -> Original
+   * Only the target text is rewritten; its own line-ending style is kept.   */
+  function eolFor(text, other) {
+    if (/\r\n/.test(text)) return '\r\n';
+    if (/\n/.test(text)) return '\n';
+    return /\r\n/.test(other) ? '\r\n' : '\n';
+  }
+
+  function applyHunk(aText, bText, h, dir) {
+    var a = splitLines(aText), b = splitLines(bText), args;
+    if (dir === 'r') {
+      args = [h.bs, h.be - h.bs].concat(a.slice(h.as, h.ae));
+      b.splice.apply(b, args);
+      return { a: aText, b: b.join(eolFor(bText, aText)) };
+    }
+    args = [h.as, h.ae - h.as].concat(b.slice(h.bs, h.be));
+    a.splice.apply(a, args);
+    return { a: a.join(eolFor(aText, bText)), b: bText };
+  }
+
   function patch(a, b) {
     return window.Diff ? Diff.createTwoFilesPatch('original', 'modified', a, b, '', '', { context: 3 }) : '';
   }
 
-  return { compare: compare, toInline: toInline, withContext: withContext, changeBlocks: changeBlocks, patch: patch };
+  return { compare: compare, toInline: toInline, withContext: withContext, changeBlocks: changeBlocks, applyHunk: applyHunk, patch: patch };
 });
 
 /* ---------- structuredCompareService: JSON / YAML / XML ---------- */
@@ -534,6 +598,7 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
   vm.arrayModes = ARRAY_MODES;
   vm.contextChoices = CONTEXT_CHOICES;
   vm.samples = SAMPLES;
+  vm.moveUnits = MOVE_UNITS;
 
   /* ----- state ----- */
   vm.format = AUTO_DETECT;
@@ -547,6 +612,7 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
   vm.right = { text: '', name: 'modified.txt' };
   vm.result = null; vm.rows = []; vm.blocks = []; vm.cur = 0; vm.view = 'side';
   vm.error = '';
+  vm.history = [];        // undo stack for arrow moves
   vm.depError = (window.Diff && window.jsyaml) ? '' :
     'A library failed to load from cdnjs (jsdiff or js-yaml). Line diff still works; word/character highlighting, YAML smart compare and .patch export need it.';
 
@@ -570,7 +636,11 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
   vm.schedule = function () { $timeout.cancel(timer); timer = $timeout(vm.compare, LIMITS.debounceMs); };
   vm.clear = function (pane) { pane.text = ''; vm.compare(); };
   vm.clearAll = function () { vm.left.text = vm.right.text = ''; vm.error = ''; reset(); };
-  vm.swap = function () { var t = vm.left.text; vm.left.text = vm.right.text; vm.right.text = t; vm.compare(); };
+  vm.swap = function () {
+    snapshot();
+    var t = vm.left.text; vm.left.text = vm.right.text; vm.right.text = t;
+    vm.compare();
+  };
   vm.download = fileService.download;
 
   vm.copy = function (text) {
@@ -652,6 +722,54 @@ app.controller('MainCtrl', function ($timeout, diffService, structuredCompareSer
     try { run(); }
     catch (e) { reset(); vm.error = 'Comparison failed: ' + e.message; if (window.console) console.error(e); }
     savePrefs();
+  };
+
+  /* ----- moving code between the panes -----
+   * Arrows next to each change copy it from one side to the other by editing the
+   * source text, then re-running the comparison. Every move can be undone.   */
+  function snapshot() {
+    vm.history.push({ l: vm.left.text, r: vm.right.text });
+    if (vm.history.length > LIMITS.history) vm.history.shift();
+  }
+
+  /* Index of the change block that contains result row `rowIndex`. */
+  function blockAt(rowIndex) {
+    var found = 0;
+    vm.blocks.forEach(function (start, k) { if (start <= rowIndex) found = k; });
+    return found;
+  }
+
+  vm.canUndo = function () { return vm.history.length > 0; };
+  vm.undo = function () {
+    var s = vm.history.pop();
+    if (!s) return;
+    vm.left.text = s.l; vm.right.text = s.r;
+    vm.compare();
+  };
+
+  /* Copy the whole text of one pane over the other. dir 'r' = Original -> Modified. */
+  vm.copyAll = function (dir) {
+    snapshot();
+    if (dir === 'r') vm.right.text = vm.left.text; else vm.left.text = vm.right.text;
+    vm.compare();
+  };
+
+  /* Which hunk does this row's arrow move? (null = this row shows no arrow) */
+  vm.moveHunk = function (r) { return vm.o.moveUnit === 'line' ? (r.hlFirst && r.hl) : (r.hbFirst && r.hb); };
+  vm.canMove = function (r) { return !!vm.moveHunk(r); };
+  vm.moveTitle = function (dir) {
+    var what = vm.o.moveUnit === 'line' ? 'line' : 'block';
+    return dir === 'r' ? 'Copy this ' + what + ' from Original to Modified' : 'Copy this ' + what + ' from Modified to Original';
+  };
+
+  vm.move = function (row, dir, rowIndex) {
+    var h = vm.moveHunk(row), at = blockAt(rowIndex), res;
+    if (!h) return;
+    snapshot();
+    res = diffService.applyHunk(vm.left.text, vm.right.text, h, dir);
+    vm.left.text = res.a; vm.right.text = res.b;
+    vm.compare();
+    vm.cur = Math.min(at, Math.max(0, vm.blocks.length - 1));   // the next change takes the place of the one just moved
   };
 
   /* ----- patch export and change navigation ----- */
